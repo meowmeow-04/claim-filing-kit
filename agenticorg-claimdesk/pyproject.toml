@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agenticorg-claimdesk"
+version = "0.1.0"
+description = "Claim desk connector plugin for AgenticOrg: vault documents, PDF claim form filling, claim package"
+readme = "README.md"
+requires-python = ">=3.12"
+# pypdf, structlog and the document extractor come from AgenticOrg itself,
+# which this plugin is installed alongside.
+dependencies = []
+
+[project.entry-points."agenticorg.connectors"]
+claim_desk = "agenticorg_claimdesk.connector:ClaimDeskConnector"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agenticorg_claimdesk = ["demo/**/*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

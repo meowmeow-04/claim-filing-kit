@@ -1,0 +1,15 @@
+{
+  "insurer": "Demo Health Insurance Co. (fictional)",
+  "policy_number": "DHI-DEMO-2026-000123",
+  "product": "Demo Individual Health Plan",
+  "policy_holder": "Asha Rao",
+  "relationship": "Self",
+  "period_start": "2026-04-01",
+  "period_end": "2027-03-31",
+  "date_first_insured": "2023-04-01",
+  "sum_insured_inr": 500000,
+  "room_rent_limit_per_day_inr": 5000,
+  "pre_existing_waiting_period_months": 36,
+  "other_policies": "No",
+  "synthetic": true
+}

@@ -1,0 +1,8 @@
+{
+  "connector": "gnani_stt",
+  "version": "1.0.0",
+  "description": "Gnani (Vachana) speech-to-text: transcribe short audio clips in Indian languages",
+  "tools": {
+    "query": "read"
+  }
+}

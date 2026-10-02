@@ -1,0 +1,20 @@
+{
+  "member_id": "DEMO-MEMBER-001",
+  "name": "Asha Rao",
+  "gender": "Female",
+  "date_of_birth": "1994-05-12",
+  "occupation": "Graphic designer",
+  "address": "14 Sample Residency, MG Road",
+  "city": "Bengaluru",
+  "state": "Karnataka",
+  "pin": "560001",
+  "phone": "+91 00000 00001",
+  "email": "asha.rao@example.com",
+  "bank": {
+    "account_holder": "Asha Rao",
+    "bank_name": "Demo Bank (fictional)",
+    "account_number": "000000001234",
+    "ifsc": "DEMO0000001"
+  },
+  "synthetic": true
+}

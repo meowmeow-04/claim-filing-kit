@@ -1,0 +1,15 @@
+{
+  "insurer": "Demo Health Insurance Co. (fictional)",
+  "policy_number": "DHI-DEMO-2025-000456",
+  "product": "Demo Individual Health Plan",
+  "policy_holder": "Kabir Mehta",
+  "relationship": "Self",
+  "period_start": "2025-04-01",
+  "period_end": "2026-03-31",
+  "date_first_insured": "2025-04-01",
+  "sum_insured_inr": 300000,
+  "room_rent_limit_per_day_inr": 3000,
+  "pre_existing_waiting_period_months": 36,
+  "other_policies": "No",
+  "synthetic": true
+}

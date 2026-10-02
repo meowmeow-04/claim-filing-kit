@@ -1,0 +1,9 @@
+.venv/
+.ruff_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+demo-output/
+.env
+.env.*

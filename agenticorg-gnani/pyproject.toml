@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agenticorg-gnani"
+version = "0.3.0"
+description = "Gnani (Vachana) speech-to-text connector plugin for AgenticOrg"
+readme = "README.md"
+requires-python = ">=3.12"
+# httpx and structlog come from AgenticOrg itself, which this plugin is
+# installed alongside. websockets (for live voice capture) does too: AgenticOrg
+# pins 15.0.1, and 15 is the first version this code was run with.
+dependencies = ["websockets>=15"]
+
+[project.scripts]
+gnani-voice = "agenticorg_gnani.voice_server:main"
+
+[project.entry-points."agenticorg.connectors"]
+gnani_stt = "agenticorg_gnani.connector:GnaniSttConnector"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agenticorg_gnani = ["static/*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

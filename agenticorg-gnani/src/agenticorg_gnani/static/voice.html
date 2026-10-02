@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tell us what happened</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --paper: #f1f5f2;
+    --sheet: #fbfcfa;
+    --ink: #15323a;
+    --muted: #5a6e70;
+    --rule: #cfdad5;
+    --record: #c2272d;
+    --done: #0f7a63;
+    --line: 2.25rem;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: "Avenir Next", Avenir, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+  main {
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: 3rem 1.25rem 4rem;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 2.4rem;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.75rem;
+  }
+  .lead { color: var(--muted); max-width: 36rem; margin: 0 0 1.75rem; }
+  .field { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; }
+  .field label { color: var(--muted); }
+  select {
+    font: inherit;
+    color: var(--ink);
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 0.4rem 0.6rem;
+  }
+  /* The statement sheet: ruled like a form, with a margin line that turns red while recording. */
+  .sheet {
+    position: relative;
+    min-height: calc(var(--line) * 7 + 0.75rem);
+    padding: 0.75rem 1.25rem 0 3.25rem;
+    background-color: var(--sheet);
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--line) - 1px),
+      var(--rule) calc(var(--line) - 1px),
+      var(--rule) var(--line)
+    );
+    background-position: 0 0.75rem;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    font-family: var(--serif);
+    font-size: 1.3rem;
+    line-height: var(--line);
+    overflow-wrap: anywhere;
+  }
+  .sheet::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2.25rem;
+    width: 2px;
+    background: var(--rule);
+    transition: background-color 0.25s;
+  }
+  .sheet[data-state="listening"]::before { background: var(--record); }
+  .sheet[data-state="saved"]::before { background: var(--done); }
+  .placeholder { color: var(--muted); font-style: italic; }
+  .caret {
+    display: inline-block;
+    width: 0.5ch;
+    height: 1.1em;
+    margin-left: 0.2ch;
+    vertical-align: text-bottom;
+    background: var(--record);
+  }
+  .caret[hidden] { display: none; }
+  @media (prefers-reduced-motion: no-preference) {
+    .caret { animation: blink 1.1s steps(2, start) infinite; }
+    @keyframes blink { to { visibility: hidden; } }
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem 1.5rem;
+    margin-top: 1.25rem;
+  }
+  button {
+    font: inherit;
+    font-weight: 600;
+    border: 0;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  button:focus-visible, select:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  #record {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.8rem 1.4rem;
+    background: var(--ink);
+    color: var(--sheet);
+  }
+  #record::before {
+    content: "";
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 50%;
+    background: var(--record);
+  }
+  #record[data-state="listening"] { background: var(--record); }
+  #record[data-state="listening"]::before { border-radius: 2px; background: var(--sheet); }
+  #record:disabled { opacity: 0.55; cursor: default; }
+  .clock { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 7.5rem; }
+  .meter {
+    width: 7rem;
+    height: 0.5rem;
+    border-radius: 999px;
+    background: var(--rule);
+    overflow: hidden;
+  }
+  .meter span { display: block; height: 100%; width: 0; background: var(--ink); transition: width 0.08s linear; }
+  #status { margin: 1rem 0 0; min-height: 1.5rem; }
+  #status[data-kind="error"] { color: var(--record); }
+  #status[data-kind="done"] { color: var(--done); }
+  .saved {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+  }
+  .saved[hidden] { display: none; }
+  .saved code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 1.05rem;
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 0.25rem 0.6rem;
+    user-select: all;
+  }
+  .saved .next { flex-basis: 100%; margin: 0.25rem 0 0; color: var(--muted); }
+  #copy { padding: 0.35rem 0.9rem; background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+  .note { color: var(--muted); font-size: 0.9rem; margin-top: 2rem; max-width: 36rem; }
+  @media (max-width: 30rem) {
+    main { padding-top: 2rem; }
+    h1 { font-size: 1.9rem; }
+    .sheet { font-size: 1.15rem; padding-left: 2.5rem; }
+    .sheet::before { left: 1.6rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tell us what happened</h1>
+  <p class="lead">Say when it happened, what happened, and where you were treated. Your words are written down each time you pause.</p>
+
+  <div class="field">
+    <label for="language">Language you will speak</label>
+    <select id="language"></select>
+  </div>
+
+  <div class="sheet" id="sheet" data-state="idle" role="log" aria-live="polite" aria-label="Your statement">
+    <span class="placeholder" id="placeholder">Your statement appears here as you speak.</span><span id="words"></span><span class="caret" id="caret" hidden></span>
+  </div>
+
+  <div class="controls">
+    <button id="record" type="button" data-state="idle">Start recording</button>
+    <span class="clock" id="clock" aria-label="Recording time"></span>
+    <span class="meter" aria-hidden="true"><span id="level"></span></span>
+  </div>
+  <p id="status" role="status"></p>
+
+  <div class="saved" id="saved" hidden>
+    <span>Reference</span>
+    <code id="reference"></code>
+    <button id="copy" type="button">Copy reference</button>
+    <p class="next">The claim is started with this reference. It stands for the statement above.</p>
+  </div>
+
+  <p class="note">Your voice is sent to Gnani to be written down. The written statement is saved on this computer.</p>
+</main>
+
+<script>
+const settings = __SETTINGS__;
+const $ = (id) => document.getElementById(id);
+const sheet = $("sheet"), words = $("words"), caret = $("caret"), placeholder = $("placeholder");
+const button = $("record"), statusLine = $("status"), clock = $("clock"), level = $("level");
+
+for (const { code, name } of settings.languages) {
+  const option = document.createElement("option");
+  option.value = code;
+  option.textContent = name;
+  $("language").append(option);
+}
+
+// Runs on the audio thread: turns the microphone into 16 kHz, 16-bit mono, in blocks of 512 samples.
+// When the browser already records at 16 kHz the samples pass through unchanged. Otherwise each
+// sample is first averaged with its neighbours (so sound too high for 16 kHz does not fold back
+// in as noise), then read off at 16 kHz positions by interpolating between neighbours.
+const workletSource = `
+class Pcm16k extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.ratio = sampleRate / 16000;               // input samples per output sample
+    this.taps = Math.max(1, Math.round(this.ratio));
+    this.ring = new Float32Array(this.taps); this.ringAt = 0; this.sum = 0;
+    this.previous = 0; this.next = 0;              // next: where the next output falls, 0..1 past "previous"
+    this.block = new Int16Array(512); this.filled = 0; this.peak = 0;
+  }
+  emit(value) {
+    const sample = Math.max(-1, Math.min(1, value));
+    const magnitude = Math.abs(sample);
+    if (magnitude > this.peak) this.peak = magnitude;
+    this.block[this.filled++] = sample < 0 ? sample * 32768 : sample * 32767;
+    if (this.filled === 512) {
+      const pcm = this.block.buffer.slice(0);
+      this.port.postMessage({ pcm, peak: this.peak }, [pcm]);
+      this.filled = 0; this.peak = 0;
+    }
+  }
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (!channel) return true;
+    for (let i = 0; i < channel.length; i++) {
+      this.sum += channel[i] - this.ring[this.ringAt];
+      this.ring[this.ringAt] = channel[i];
+      this.ringAt = (this.ringAt + 1) % this.taps;
+      const current = this.taps === 1 ? channel[i] : this.sum / this.taps;
+      while (this.next < 1) {
+        this.emit(this.previous + (current - this.previous) * this.next);
+        this.next += this.ratio;
+      }
+      this.next -= 1;
+      this.previous = current;
+    }
+    return true;
+  }
+}
+registerProcessor("pcm16k", Pcm16k);
+`;
+const workletUrl = URL.createObjectURL(new Blob([workletSource], { type: "application/javascript" }));
+
+let state = "idle", socket = null, stream = null, context = null, startedAt = 0, ticker = 0, watchdog = 0;
+const SAVE_WAIT_MS = 45000; // the server gives up on a dead connection to Gnani well before this
+
+function show(kind, text) {
+  statusLine.dataset.kind = kind;
+  statusLine.textContent = text;
+}
+
+function setState(next) {
+  state = next;
+  sheet.dataset.state = next;
+  button.dataset.state = next;
+  button.disabled = next === "asking" || next === "connecting" || next === "finishing";
+  button.textContent = next === "listening" ? "Stop and save"
+    : next === "saved" ? "Record another statement" : "Start recording";
+  caret.hidden = next !== "listening";
+  $("language").disabled = next !== "idle" && next !== "saved" && next !== "error";
+}
+
+function formatClock(seconds) {
+  const whole = Math.max(0, Math.floor(seconds));
+  return Math.floor(whole / 60) + ":" + String(whole % 60).padStart(2, "0");
+}
+
+function tick() {
+  clock.textContent = formatClock((performance.now() - startedAt) / 1000) + " of " + formatClock(settings.maxSeconds);
+}
+
+async function openAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const build = async (options) => {
+    const created = new AudioContextClass(options);
+    try {
+      await created.audioWorklet.addModule(workletUrl);
+      const source = created.createMediaStreamSource(stream);
+      const node = new AudioWorkletNode(created, "pcm16k", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 });
+      node.port.onmessage = (event) => {
+        level.style.width = Math.min(100, Math.round(event.data.peak * 140)) + "%";
+        if (state === "listening" && socket && socket.readyState === WebSocket.OPEN) socket.send(event.data.pcm);
+      };
+      source.connect(node);
+      node.connect(created.destination); // the node outputs silence; this keeps the audio graph running
+      return created;
+    } catch (error) {
+      created.close();
+      throw error;
+    }
+  };
+  try {
+    context = await build({ sampleRate: 16000 }); // the browser resamples the microphone for us
+  } catch (error) {
+    context = await build(undefined); // some browsers cannot; the worklet resamples instead
+  }
+  if (context.state === "suspended") await context.resume();
+}
+
+function closeAudio() {
+  if (stream) stream.getTracks().forEach((track) => track.stop());
+  if (context) context.close();
+  stream = null;
+  context = null;
+  level.style.width = "0";
+  clearInterval(ticker);
+}
+
+function finishing(message) {
+  setState("finishing");
+  show("info", message);
+  closeAudio();
+  clearTimeout(watchdog);
+  watchdog = setTimeout(() => fail("Saving took too long, so the recording was dropped. Check the connection, then press Start recording."), SAVE_WAIT_MS);
+}
+
+function fail(message) {
+  clearTimeout(watchdog);
+  closeAudio();
+  if (socket) { socket.onclose = null; socket.close(); socket = null; }
+  setState("error");
+  show("error", message);
+}
+
+function microphoneProblem(error) {
+  if (error && (error.name === "NotAllowedError" || error.name === "SecurityError")) {
+    return "The microphone is blocked. Allow it from the address bar, then press Start recording.";
+  }
+  if (error && error.name === "NotFoundError") return "No microphone was found. Connect one, then press Start recording.";
+  return "The microphone could not be opened. Close other apps that use it, then press Start recording.";
+}
+
+async function start() {
+  words.textContent = "";
+  placeholder.hidden = false;
+  $("saved").hidden = true;
+  clock.textContent = "";
+  if (!navigator.mediaDevices || !window.AudioWorkletNode) {
+    fail("This browser cannot record here. Open this page as http://localhost in a current Chrome, Edge, Safari or Firefox.");
+    return;
+  }
+  setState("asking");
+  show("info", "Asking for the microphone.");
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+  } catch (error) {
+    fail(microphoneProblem(error));
+    return;
+  }
+  setState("connecting");
+  show("info", "Connecting.");
+  try {
+    await openAudio();
+  } catch (error) {
+    fail("Recording could not start in this browser. Try a current Chrome, Edge, Safari or Firefox.");
+    return;
+  }
+  socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  socket.binaryType = "arraybuffer";
+  socket.onopen = () => socket.send(JSON.stringify({ type: "start", language: $("language").value }));
+  socket.onmessage = (event) => handle(JSON.parse(event.data));
+  socket.onclose = () => {
+    if (state !== "saved" && state !== "error") fail("The connection closed before the statement was saved. Press Start recording to try again.");
+  };
+}
+
+function handle(message) {
+  if (message.type === "ready") {
+    settings.maxSeconds = message.max_seconds;
+    startedAt = performance.now();
+    ticker = setInterval(tick, 250);
+    tick();
+    setState("listening");
+    show("info", "Listening. Pause briefly between sentences.");
+  } else if (message.type === "transcript") {
+    if (!message.text) return;
+    placeholder.hidden = true;
+    words.textContent += (words.textContent ? " " : "") + message.text;
+    if (state === "listening") show("info", "Listening. Pause briefly between sentences.");
+  } else if (message.type === "processing") {
+    if (state === "listening") show("info", "Writing that down.");
+  } else if (message.type === "stopping") {
+    finishing(message.message); // the server ended the recording (time limit) and is saving it
+  } else if (message.type === "notice") {
+    show("info", message.message);
+  } else if (message.type === "error") {
+    fail(message.message);
+  } else if (message.type === "saved") {
+    clearTimeout(watchdog);
+    closeAudio();
+    placeholder.hidden = true;
+    words.textContent = message.transcript;
+    $("reference").textContent = message.session_id;
+    $("saved").hidden = false;
+    setState("saved");
+    show("done", message.complete ? "Saved." : "Saved, but the recording ended early. Check the statement.");
+    socket.onclose = null;
+  }
+}
+
+function stop() {
+  finishing("Finishing the last sentence.");
+  if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "stop" }));
+}
+
+button.addEventListener("click", () => (state === "listening" ? stop() : start()));
+$("copy").addEventListener("click", async () => {
+  const reference = $("reference").textContent;
+  try {
+    await navigator.clipboard.writeText(reference);
+    $("copy").textContent = "Copied";
+  } catch (error) {
+    window.getSelection().selectAllChildren($("reference"));
+  }
+  setTimeout(() => { $("copy").textContent = "Copy reference"; }, 1500);
+});
+setState("idle");
+</script>
+</body>
+</html>

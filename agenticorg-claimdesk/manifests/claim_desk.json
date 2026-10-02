@@ -1,0 +1,12 @@
+{
+  "connector": "claim_desk",
+  "version": "1.0.0",
+  "description": "Claim desk: read vault documents, fill the insured's claim form as a PDF, assemble the claim package",
+  "tools": {
+    "list_records": "read",
+    "read_record": "read",
+    "check_status": "read",
+    "prepare_draft": "write",
+    "build_filing_payload": "write"
+  }
+}

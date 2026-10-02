@@ -1,0 +1,20 @@
+{
+  "member_id": "DEMO-MEMBER-002",
+  "name": "Kabir Mehta",
+  "gender": "Male",
+  "date_of_birth": "1988-11-03",
+  "occupation": "School teacher",
+  "address": "7 Example Enclave, Park Street",
+  "city": "Pune",
+  "state": "Maharashtra",
+  "pin": "411001",
+  "phone": "+91 00000 00002",
+  "email": "kabir.mehta@example.com",
+  "bank": {
+    "account_holder": "Kabir Mehta",
+    "bank_name": "Demo Bank (fictional)",
+    "account_number": "000000005678",
+    "ifsc": "DEMO0000002"
+  },
+  "synthetic": true
+}
