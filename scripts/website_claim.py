@@ -289,14 +289,21 @@ class Claim:
         print("  The analyst asks the insured:")
         for number, question in enumerate(questions or ["Please confirm the details above."], 1):
             print(f"    {number}. {question}")
-        answers = self.auto_answer or input("  Your answers: ").strip()
         item = self.approval_for(str(reply.get("run_id") or ""))
-        if item:
-            self.site.need(
-                "POST", f"/approvals/{item['id']}/decide", {"decision": "approve", "notes": answers}, "sending answers"
-            )
-            print("  answers recorded on the website's approval")
-        return answers
+        if self.auto_answer or item is None:
+            answers = self.auto_answer or input("  Your answers: ").strip()
+            if item:
+                self.site.need(
+                    "POST", f"/approvals/{item['id']}/decide", {"decision": "approve", "notes": answers}, "sending answers"
+                )
+                print("  answers recorded on the website's approval")
+            return answers
+        print("  Answer on the website: open Approvals, type your answers in the note and approve.")
+        decision, notes = self.decision_of(item["id"], with_notes=True)
+        if decision != "approve":
+            raise SystemExit(f"The insured chose {decision} instead of answering; the claim stops here.")
+        print(f"  answers from the website: {notes}")
+        return notes
 
     def step(self, key: str) -> dict[str, Any]:
         reply, out = self.run_agent(key)
@@ -318,18 +325,21 @@ class Claim:
             print("  Waiting for the insured to approve or reject it in the website's Approvals screen ...")
         return self.decision_of(item["id"])
 
-    def decision_of(self, item_id: str, timeout_seconds: int = 3600) -> str:
-        """The insured's decision on the approval: approve, reject, or expired. Never assumed."""
+    def decision_of(self, item_id: str, timeout_seconds: int = 3600, with_notes: bool = False) -> Any:
+        """The insured's decision on the approval (approve, reject or expired) and, if asked, its note. Never assumed."""
         deadline = time.monotonic() + timeout_seconds
+        verdict, notes = "expired", ""
         while time.monotonic() < deadline:
             for status in ("decided", "rejected", "expired"):
                 found, page = self.site.call("GET", f"/approvals?status={status}&per_page=100")
                 items = page.get("items", []) if found == 200 and isinstance(page, dict) else []
                 item = next((i for i in items if i.get("id") == item_id), None)
                 if item:
-                    return "expired" if status == "expired" else str(item.get("decision") or status).lower()
+                    verdict = "expired" if status == "expired" else str(item.get("decision") or status).lower()
+                    notes = str(item.get("decision_notes") or "").strip()
+                    return (verdict, notes) if with_notes else verdict
             time.sleep(3)
-        return "expired"
+        return (verdict, notes) if with_notes else verdict
 
 
 def _summary(key: str, out: dict[str, Any]) -> str:
@@ -426,6 +436,7 @@ def _statement(args: argparse.Namespace) -> str:
 
 
 def main() -> int:
+    sys.stdout.reconfigure(line_buffering=True)  # each line shows as it happens, in a terminal or a log
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("setup", help="create the claim desk agents on the website")
@@ -436,7 +447,9 @@ def main() -> int:
     run_cmd.add_argument("--member", default="DEMO-MEMBER-001")
     run_cmd.add_argument("--claim", default="DEMO-CLAIM-001")
     run_cmd.add_argument("--outbox", default="~/claim-desk-outbox")
-    run_cmd.add_argument("--answer", default="", help="answer any question with this text instead of asking")
+    run_cmd.add_argument(
+        "--answer", default="", help="answer any question with this text; without it, answer in the website's Approvals"
+    )
     run_cmd.add_argument("--approve", action="store_true", help="approve the final form here instead of on the website")
     args = parser.parse_args()
     if args.command == "setup":
