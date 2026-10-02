@@ -82,6 +82,29 @@ STEPS = [
         ["transcribe"],
     ),
     agent("incident", "State 2: understand the incident", "assess_incident", "assess_incident", ["medical_records"]),
+    # State 2 - clarification. When the analyst is unsure, the run pauses on
+    # ``incident`` and the insured answers its open questions in the approval
+    # note (scripts/register.py answer). The review below then corrects the
+    # assessment with those answers. The engine only runs forward, so there is
+    # one round of questions; a review that is still unsure pauses for a person.
+    # Later steps depend on the gate, not the review: a skipped review would
+    # otherwise skip them too. When the gate passes, the review runs before
+    # ``policy`` because ties go by definition order (tests/test_workflow.py).
+    {
+        "id": "clarify_gate",
+        "name": "State 2: did the insured answer questions about the incident?",
+        "type": "condition",
+        "condition": 'incident.output.hitl_decision.notes != ""',
+        "true_path": "incident_review",
+        "depends_on": ["incident"],
+    },
+    agent(
+        "incident_review",
+        "State 2: correct the incident with the insured's answers",
+        "review_incident",
+        "review_incident",
+        ["clarify_gate"],
+    ),
     # State 3 - claim eligibility
     connector(
         "policy",
@@ -89,14 +112,14 @@ STEPS = [
         "claim_desk",
         "read_record",
         {**CLAIM, "record": "policy"},
-        ["incident"],
+        ["clarify_gate"],
     ),
     connector(
         "checks",
         "State 3: check policy dates and documents",
         "claim_desk",
         "check_status",
-        {**CLAIM, "incident_date": "$incident_date", "incident": "$incident"},
+        {**CLAIM, "incident_date": "$incident_date", "incident": "$incident", "incident_review": "$incident_review"},
         ["policy"],
     ),
     agent("eligibility", "State 3: check eligibility", "check_eligibility", "check_eligibility", ["checks"]),
@@ -145,7 +168,14 @@ STEPS = [
         "State 6: fill the insured's form (Part A) as a PDF",
         "claim_desk",
         "prepare_draft",
-        {**CLAIM, "form": "part_a", "transcript": "$transcribe", "incident": "$incident", "coverage": "$coverage"},
+        {
+            **CLAIM,
+            "form": "part_a",
+            "transcript": "$transcribe",
+            "incident": "$incident",
+            "incident_review": "$incident_review",
+            "coverage": "$coverage",
+        },
         ["report"],
     ),
     {

@@ -92,6 +92,28 @@ def scripted_replies(policy_active: bool) -> dict[str, dict[str, Any]]:
             ],
             "open_questions": [],
         },
+        # Runs only when the insured answered the analyst's questions (clarify_gate).
+        "review_incident": {
+            "status": "completed",
+            "confidence": 0.93,
+            "incident_summary": (
+                "On 14 September 2026 the insured slipped on wet stairs at home and fell on her right hand. "
+                "She was admitted to Sample City Hospital, where a fracture of the right wrist was set under "
+                "anaesthesia and put in a cast. She was discharged the next day."
+            ),
+            "incident_date": "2026-09-14",
+            "cause": "injury",
+            "injury_or_illness": "Fracture of the right wrist",
+            "pre_existing_related": "no",
+            "pre_existing_evidence": [
+                {
+                    "source": "2025-11-02_annual_health_check.pdf",
+                    "quote": "no history of fracture, bone disease, osteoporosis or joint disorder",
+                }
+            ],
+            "open_questions": [],
+            "answered": [{"question": "Which year did the fall happen?", "answer": "2026"}],
+        },
         "check_eligibility": {
             "status": "completed",
             "confidence": 0.92,
@@ -206,6 +228,8 @@ async def run(
     claim_ref: str,
     *,
     decision: str = "approve",
+    answers: str = "",
+    real_confidence_floor: bool = False,
     outbox: Path | None = None,
     replies: dict[str, Any] | None = None,
     gnani: Any = None,
@@ -213,6 +237,12 @@ async def run(
 ) -> dict[str, Any]:
     """Run the workflow once. Returns the final status, the step results and a printable trace.
 
+    When an analyst step pauses because it is unsure, the dry run answers its
+    questions with ``answers`` (approving with them as the note), as the
+    insured would with scripts/register.py answer; the approval step gets
+    ``decision``. AgenticOrg sets an analyst's confidence floor to 0 when it
+    runs on the fake model, so an unsure analyst never pauses in a dry run;
+    ``real_confidence_floor`` keeps the floor a real server uses (0.88).
     ``replies`` overrides scripted model replies by action (a string is sent
     as-is, so a test can make the model answer with something that is not
     JSON); ``gnani`` replaces the stand-in for Gnani's API; ``payload_extra``
@@ -267,10 +297,15 @@ async def run(
         **(payload_extra or {}),
     }
     payload = {key: value for key, value in payload.items() if value is not None}  # None: leave it out of the run
-    paused = ""
+    paused: dict[str, str] = {}
     with (
         patch.object(step_types, "_validated_workflow_company", company),
         patch.object(step_types, "_load_workflow_connector_config", connector_config),
+        patch.object(
+            step_types,
+            "_real_llm_provider_configured",
+            (lambda: True) if real_confidence_floor else step_types._real_llm_provider_configured,
+        ),
         patch("core.feature_flags.load_flag_rows_strict", no_flags),
         patch.object(
             gnani_cls,
@@ -280,15 +315,23 @@ async def run(
     ):
         run_id = await engine.start_run(definition, payload, tenant_id=TENANT)
         result = await engine.execute(run_id)
-        if result.get("status") == "waiting_hitl":
-            paused = f"    (the run paused here for the insured; the dry run answered: {decision})\n"
-            result = await engine.resume_from_hitl(run_id, {"decision": decision, "notes": "dry run"})
+        for _ in range(len(definition["steps"])):  # each pause is resumed once; the bound only stops a runaway loop
+            if result.get("status") != "waiting_hitl":
+                break
+            waiting = (await engine.state_store.load(run_id)).get("waiting_step_id", "")
+            if waiting == "approval":
+                paused[waiting] = f"    (the run paused here for the insured; the dry run answered: {decision})\n"
+                resume = {"decision": decision, "notes": "dry run"}
+            else:
+                paused[waiting] = f"    (the analyst was unsure and asked the insured; the dry run answered: {answers!r})\n"
+                resume = {"decision": "approve", "notes": answers}
+            result = await engine.resume_from_hitl(run_id, resume)
     state = await engine.state_store.load(run_id)
     steps = state["step_results"]
     trace = []
     for step in definition["steps"]:
         if step["id"] in steps:
-            note = paused if step["type"] == "human_in_loop" else ""
+            note = paused.get(step["id"], "")
             trace.append(f"{step['name']}\n{note}    -> {_observation(step['id'], steps[step['id']])}")
     return {
         "status": result.get("status"),

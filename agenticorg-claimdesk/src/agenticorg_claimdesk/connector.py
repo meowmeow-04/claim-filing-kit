@@ -52,6 +52,18 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _incident_result(incident: Any, incident_review: Any) -> dict[str, Any]:
+    """The incident assessment to use: the review made with the insured's answers when it ran, else the first one.
+
+    A review step that was skipped, or a placeholder the run did not fill,
+    carries no assessment, so the first one stands.
+    """
+    review = _payload(incident_review)
+    if review.get("incident_summary") or review.get("incident_date"):
+        return review
+    return _payload(incident)
+
+
 def _payload(value: Any) -> dict[str, Any]:
     """Accept a tool/agent result directly, wrapped as a workflow step result, or as JSON text."""
     if isinstance(value, str):
@@ -261,7 +273,12 @@ class ClaimDeskConnector(BaseConnector):
         return result
 
     async def check_status(
-        self, member_id: str, claim_ref: str, incident_date: str = "", incident: Any = None
+        self,
+        member_id: str,
+        claim_ref: str,
+        incident_date: str = "",
+        incident: Any = None,
+        incident_review: Any = None,
     ) -> dict[str, Any]:
         """Deterministic checks on a claim: no model involved.
 
@@ -269,8 +286,9 @@ class ClaimDeskConnector(BaseConnector):
         whether the bill is in the vault, whether the hospital's form is
         received, incomplete or missing, and whether a draft of the insured's
         form exists. The day used is the admission date on the hospital's
-        form; without that form, incident_date, then the incident_date in an
-        incident result passed in, then today. date_source says which.
+        form; without that form, incident_date, then the incident_date in the
+        incident result passed in (the review made with the insured's answers
+        when there is one), then today. date_source says which.
         """
         safe_id(claim_ref, "claim_ref")
         schedule = self.vault.policy_schedule(member_id)
@@ -281,7 +299,7 @@ class ClaimDeskConnector(BaseConnector):
         if on is None:
             on, source = _iso_date(incident_date), "incident_date"
         if on is None:
-            on, source = _iso_date(_payload(incident).get("incident_date")), "incident_result"
+            on, source = _iso_date(_incident_result(incident, incident_review).get("incident_date")), "incident_result"
         if on is None:
             on, source = _today(), "today"
         start, end = _iso_date(schedule.get("period_start")), _iso_date(schedule.get("period_end"))
@@ -313,13 +331,16 @@ class ClaimDeskConnector(BaseConnector):
         transcript: Any = None,
         incident: Any = None,
         coverage: Any = None,
+        incident_review: Any = None,
     ) -> dict[str, Any]:
         """Fill a claim form as a PDF and save it to the outbox. Nothing is sent.
 
         form=part_a (default): the insured's form. Identity, policy and bank
         fields come from the vault; hospital and bill fields from the
         hospital's form; the incident description and the amounts claimed from
-        the transcript, incident and coverage results passed in. The signature
+        the transcript, incident and coverage results passed in (the incident
+        review, made with the insured's answers, replaces the incident result
+        when there is one). The signature
         is always left blank for the insured.
         form=part_b_request: the hospital's form with only the patient section
         filled, to hand to the hospital.
@@ -350,7 +371,7 @@ class ClaimDeskConnector(BaseConnector):
             raise ValueError("form must be part_a or part_b_request")
 
         said = _payload(transcript)
-        incident_out = _payload(incident)
+        incident_out = _incident_result(incident, incident_review)
         coverage_out = _payload(coverage)
         bank = profile.get("bank") if isinstance(profile.get("bank"), dict) else {}
 

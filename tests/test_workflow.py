@@ -78,7 +78,8 @@ async def test_complete_claim_runs_all_eight_states(tmp_path: Path) -> None:
     assert outcome["status"] == "completed" and outcome["calls"] == 4
     result = statuses(outcome)
     assert result.pop("stop_not_eligible") == "skipped" and result.pop("hospital_form_needed") == "skipped"
-    assert set(result.values()) == {"completed"} and len(result) == len(STEP_IDS) - 2
+    assert result.pop("incident_review") == "skipped"  # the analyst was sure: nothing to ask the insured
+    assert set(result.values()) == {"completed"} and len(result) == len(STEP_IDS) - 3
 
     assert output(outcome, "transcribe")["transcript"].startswith("On the fourteenth")
     assert output(outcome, "checks")["policy_status"] == "active"
@@ -159,6 +160,77 @@ async def test_needs_review_continues_to_the_human_approval(tmp_path: Path) -> N
         "DEMO-MEMBER-001", "DEMO-CLAIM-001", outbox=tmp_path, replies={"check_eligibility": review}
     )
     assert statuses(outcome)["approval"] == "completed" and statuses(outcome)["package"] == "completed"
+
+
+# -------------------------------------------------------------- clarification
+
+UNSURE = {
+    "status": "completed",
+    "confidence": 0.6,
+    "incident_summary": "On 14 September the insured slipped on wet stairs at home and broke her right wrist.",
+    "incident_date": "",
+    "cause": "injury",
+    "injury_or_illness": "Fracture of the right wrist",
+    "pre_existing_related": "no",
+    "pre_existing_evidence": [],
+    "open_questions": ["Which year did the fall happen?"],
+}
+
+
+def test_the_review_hangs_off_a_gate_and_runs_before_the_policy_step() -> None:
+    from workflows.engine import WorkflowEngine
+
+    by_id = {step["id"]: step for step in DEFINITION["steps"]}
+    gate = by_id["clarify_gate"]
+    assert gate["type"] == "condition" and gate["depends_on"] == ["incident"]
+    assert gate["true_path"] == "incident_review" and "false_path" not in gate
+    assert by_id["incident_review"]["depends_on"] == ["clarify_gate"]
+    # later steps follow the gate, not the review, so a skipped review cannot skip them
+    assert by_id["policy"]["depends_on"] == ["clarify_gate"]
+    assert all("incident_review" not in step.get("depends_on", []) for step in DEFINITION["steps"])
+    for step_id in ("checks", "fill_form"):
+        assert by_id[step_id]["params"]["incident_review"] == "$incident_review"
+    order = WorkflowEngine._topological_sort(DEFINITION["steps"])
+    assert order.index("incident_review") < order.index("policy")
+
+
+async def test_an_unsure_analyst_asks_and_the_answer_corrects_the_claim(tmp_path: Path) -> None:
+    # The statement gave no year. With no hospital form, the policy check and the
+    # claim form take the date from the incident result, so the answer must reach both.
+    outcome = await dry_run.run(
+        "DEMO-MEMBER-001",
+        "DEMO-CLAIM-002",
+        outbox=tmp_path,
+        replies={"assess_incident": UNSURE},
+        answers="It happened in 2026.",
+        real_confidence_floor=True,
+    )
+    result = statuses(outcome)
+    assert result["incident"] == "completed" and result["incident_review"] == "completed"
+    assert output(outcome, "incident")["hitl_decision"]["notes"] == "It happened in 2026."
+    assert output(outcome, "incident_review")["incident_date"] == "2026-09-14"
+    assert output(outcome, "checks")["date_source"] == "incident_result"
+    assert output(outcome, "checks")["checked_for_date"] == "2026-09-14"
+    assert output(outcome, "checks")["policy_status"] == "active"
+    form = read_fields(Path(output(outcome, "fill_form")["pdf_path"]).read_bytes())
+    assert form["date_of_event"] == "2026-09-14"
+    assert outcome["calls"] == 5  # incident, review, eligibility, coverage, report
+
+
+async def test_approving_without_answers_keeps_the_first_assessment(tmp_path: Path) -> None:
+    outcome = await dry_run.run(
+        "DEMO-MEMBER-001",
+        "DEMO-CLAIM-002",
+        outbox=tmp_path,
+        replies={"assess_incident": UNSURE},
+        answers="",
+        real_confidence_floor=True,
+    )
+    result = statuses(outcome)
+    assert result["incident"] == "completed" and result["incident_review"] == "skipped"
+    assert result["policy"] == "completed" and result["checks"] == "completed"
+    assert output(outcome, "checks")["date_source"] != "incident_result"  # no date to use: the first one had none
+    assert outcome["calls"] == 4
 
 
 STATEMENT = "On the fourteenth of September I slipped on the wet stairs at home and broke my right wrist."

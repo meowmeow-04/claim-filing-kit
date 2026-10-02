@@ -15,10 +15,15 @@ tests/test_register.py, and the routes were read from its source (commit
     python3 scripts/register.py run WORKFLOW_ID --audio-url https://.../note.wav --language en-IN \\
         --member DEMO-MEMBER-001 --claim DEMO-CLAIM-001
 
+    python3 scripts/register.py answer RUN_ID "It happened on 14 September 2026."
+
 ``setup`` registers ``claim_desk`` and ``gnani_stt`` under the company, runs
 each connector's test (an agent or workflow needs them healthy), and creates
 the workflow. ``run`` starts a run and follows it until it finishes or waits
-for approval; approve in AgenticOrg's Approvals screen.
+for approval; approve in AgenticOrg's Approvals screen. A run can also stop
+at state 2 when the analyst is unsure about the incident: ``run`` then prints
+its questions, and ``answer`` approves that step with the insured's answers
+as the note, so the review step corrects the assessment (one round only).
 
 A run starts from one of two things. ``--voice-session`` is the reference the
 live capture page shows after "Stop and save"; the statement is read from the
@@ -224,6 +229,43 @@ def run(api: Api, workflow_id: str, body: dict[str, Any], wait_seconds: int) -> 
     started = _need(*api.call("POST", f"/workflows/{workflow_id}/run", body), "starting the run")
     run_id = started["run_id"]
     print(f"Run {run_id} started")
+    return follow(api, run_id, wait_seconds)
+
+
+def waiting_questions(state: dict[str, Any]) -> list[str]:
+    """The open questions of the step a run is paused on, if it has any."""
+    for step in state.get("steps") or []:
+        if step.get("status") == "waiting_hitl":
+            output = step.get("output") if isinstance(step.get("output"), dict) else {}
+            return [str(q) for q in output.get("open_questions") or [] if str(q).strip()]
+    return []
+
+
+def answer(api: Api, run_id: str, notes: str, wait_seconds: int) -> int:
+    """Approve the run's pending step with the insured's answers as the note, then follow the run."""
+    if not notes.strip():
+        raise SystemExit("Give the answers as text, for example: answer RUN_ID \"It happened on 14 September 2026.\"")
+    listing = _need(*api.call("GET", "/approvals?per_page=100"), "listing approvals")
+    item = next(
+        (
+            i
+            for i in listing.get("items", [])
+            if run_id in {str((i.get("context") or {}).get(k)) for k in ("workflow_run_id", "engine_run_id")}
+        ),
+        None,
+    )
+    if item is None:
+        raise SystemExit(f"No pending approval for run {run_id}. It may have been decided already, or expired.")
+    _need(
+        *api.call("POST", f"/approvals/{item['id']}/decide", {"decision": "approve", "notes": notes.strip()}),
+        "sending the answers",
+    )
+    print(f"Answers sent for run {run_id}; it continues with them")
+    return follow(api, run_id, wait_seconds)
+
+
+def follow(api: Api, run_id: str, wait_seconds: int) -> int:
+    """Print each step's status as it changes until the run finishes, waits for a person, or time runs out."""
     deadline = time.monotonic() + wait_seconds
     seen: dict[str, str] = {}
     state: dict[str, Any] = {}
@@ -241,9 +283,18 @@ def run(api: Api, workflow_id: str, body: dict[str, Any], wait_seconds: int) -> 
     status = state.get("status")
     print(f"Run status: {status}")
     if status == "waiting_hitl":
-        print(
-            "It is waiting for approval: open Approvals in AgenticOrg, check the filled form in the outbox, and decide."
-        )
+        questions = waiting_questions(state)
+        if questions:
+            print("The analyst is unsure and asks the insured:")
+            for number, question in enumerate(questions, 1):
+                print(f"  {number}. {question}")
+            print(f'Answer them in one go: python3 scripts/register.py answer {run_id} "your answers"')
+            print("(or type the answers in the note on Approvals in AgenticOrg and approve)")
+        else:
+            print(
+                "It is waiting for approval: open Approvals in AgenticOrg, check the filled form in the outbox, "
+                "and decide."
+            )
     return 0 if status in ("completed", "waiting_hitl") else 1
 
 
@@ -263,6 +314,10 @@ def main() -> int:
     run_cmd.add_argument("--member", default="DEMO-MEMBER-001")
     run_cmd.add_argument("--claim", default="DEMO-CLAIM-001")
     run_cmd.add_argument("--wait", type=int, default=300, help="seconds to follow the run")
+    answer_cmd = commands.add_parser("answer", help="answer the questions a paused run asks, and continue it")
+    answer_cmd.add_argument("run_id")
+    answer_cmd.add_argument("answers", help="the insured's answers, as plain text")
+    answer_cmd.add_argument("--wait", type=int, default=300, help="seconds to follow the run")
     args = parser.parse_args()
 
     token = os.environ.get("AGENTICORG_TOKEN", "").strip()
@@ -274,6 +329,8 @@ def main() -> int:
     api = Api(os.environ.get("AGENTICORG_URL", "http://localhost:8000"), token)
     if args.command == "setup":
         return setup(api, company_id, os.environ.get("GNANI_API_KEY", "").strip(), args.outbox_dir, args.vault_dir)
+    if args.command == "answer":
+        return answer(api, args.run_id, args.answers, args.wait)
     session = None
     if args.voice_session:
         try:

@@ -9,7 +9,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
-from core.schemas.api import ConnectorCreate, WorkflowCreate, WorkflowRunTrigger
+from core.schemas.api import (
+    ConnectorCreate,
+    HITLDecision,
+    WorkflowCreate,
+    WorkflowRunTrigger,
+)
 from workflows.parser import WorkflowParser
 
 KIT = Path(__file__).resolve().parents[1]
@@ -98,11 +103,13 @@ def test_voice_sessions_that_cannot_be_used_say_why(tmp_path: Path, session_id: 
 class _Server:
     """The routes register.py uses, answering in the shapes AgenticOrg's handlers return."""
 
-    def __init__(self, existing: set[str] | None = None) -> None:
+    def __init__(self, existing: set[str] | None = None, unsure: bool = False) -> None:
         self.calls: list[tuple[str, str]] = []
         self.bodies: list[dict] = []
         self.existing = existing or set()
         self.polls = 0
+        self.unsure = unsure  # the analyst pauses on ``incident`` with a question for the insured
+        self.decision: dict | None = None
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -123,6 +130,22 @@ class _Server:
                 assert self.headers["authorization"] == "Bearer token-123"
                 if self.path.startswith("/api/v1/connectors?"):
                     return self._reply(200, {"items": [{"id": f"id-{n}", "name": n} for n in sorted(outer.existing)]})
+                if self.path.startswith("/api/v1/workflows/runs/") and outer.unsure:
+                    if outer.decision is not None:
+                        steps = [
+                            {"step_id": "incident", "status": "completed", "error_message": None},
+                            {"step_id": "incident_review", "status": "completed", "error_message": None},
+                        ]
+                        return self._reply(200, {"status": "completed", "steps": steps})
+                    question = {"open_questions": ["Which year did the fall happen?"], "confidence": 0.6}
+                    waiting = {"step_id": "incident", "status": "waiting_hitl", "error_message": None, "output": question}
+                    steps = [waiting]
+                    return self._reply(200, {"status": "waiting_hitl", "steps": steps})
+                if self.path.startswith("/api/v1/approvals?"):
+                    other = {"id": "hitl-0", "context": {"workflow_run_id": "run-0", "step_id": "approval"}}
+                    mine = {"id": "hitl-1", "context": {"workflow_run_id": "run-1", "step_id": "incident"}}
+                    page = {"items": [other, mine], "total": 2, "page": 1, "per_page": 100, "pages": 1}
+                    return self._reply(200, page)
                 if self.path.startswith("/api/v1/workflows/runs/"):
                     outer.polls += 1
                     done = outer.polls >= 2
@@ -148,6 +171,9 @@ class _Server:
                 if self.path == "/api/v1/workflows":
                     WorkflowCreate(**body)
                     return self._reply(201, {"workflow_id": "wf-1"})
+                if self.path == "/api/v1/approvals/hitl-1/decide":
+                    outer.decision = HITLDecision(**body).model_dump()
+                    return self._reply(200, {"id": "hitl-1", "status": "decided"})
                 if self.path == "/api/v1/workflows/wf-1/run":
                     WorkflowRunTrigger(**body)
                     return self._reply(200, {"run_id": "run-1", "status": "running"})
@@ -236,3 +262,33 @@ def test_only_https_or_local_http_is_accepted() -> None:
     register.Api("http://localhost:8000", "t")
     with pytest.raises(SystemExit):
         register.Api("http://agenticorg.example.com", "t")
+
+
+def test_a_paused_run_prints_the_analysts_questions(no_proxy: None, capsys: pytest.CaptureFixture) -> None:
+    server = _Server(unsure=True)
+    body = register.run_body(COMPANY, "DEMO-MEMBER-001", "DEMO-CLAIM-001", "https://files.example.com/a.wav", "en-IN")
+    assert register.run(register.Api(server.url, "token-123"), "wf-1", body, wait_seconds=30) == 0
+    out = capsys.readouterr().out
+    assert "1. Which year did the fall happen?" in out
+    assert 'register.py answer run-1 "your answers"' in out
+
+
+def test_answer_approves_the_runs_own_item_with_the_answers_and_follows_it(
+    no_proxy: None, capsys: pytest.CaptureFixture
+) -> None:
+    server = _Server(unsure=True)
+    code = register.answer(register.Api(server.url, "token-123"), "run-1", "  It was in 2026.  ", wait_seconds=30)
+    out = capsys.readouterr().out
+    assert code == 0 and "Answers sent for run run-1" in out and "incident_review: completed" in out
+    assert server.decision == {"decision": "approve", "notes": "It was in 2026."}
+    assert ("POST", "/api/v1/approvals/hitl-1/decide") in server.calls  # not the other run's item (hitl-0)
+
+
+def test_answer_refuses_empty_answers_and_an_unknown_run(no_proxy: None) -> None:
+    server = _Server(unsure=True)
+    api = register.Api(server.url, "token-123")
+    with pytest.raises(SystemExit, match="Give the answers"):
+        register.answer(api, "run-1", "   ", wait_seconds=30)
+    with pytest.raises(SystemExit, match="No pending approval for run run-9"):
+        register.answer(api, "run-9", "It was in 2026.", wait_seconds=30)
+    assert server.decision is None and not any(path.endswith("/decide") for _, path in server.calls)
