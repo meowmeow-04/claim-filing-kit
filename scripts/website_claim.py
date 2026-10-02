@@ -183,7 +183,14 @@ def setup(site: Site) -> int:
     existing = find_agents(site)
     for spec in AGENTS:
         if spec["key"] in existing:
-            print(f"  {spec['name']}: already there ({existing[spec['key']]['id']})")
+            agent_id = existing[spec["key"]]["id"]
+            stored = site.need("GET", f"/agents/{agent_id}", what=f"reading {spec['name']}")
+            wanted = system_prompt(spec)
+            if (stored.get("system_prompt_text") or stored.get("system_prompt") or "").strip() == wanted.strip():
+                print(f"  {spec['name']}: up to date ({agent_id})")
+            else:
+                site.need("PATCH", f"/agents/{agent_id}", {"system_prompt_text": wanted}, what=f"updating {spec['name']}")
+                print(f"  {spec['name']}: instructions updated ({agent_id})")
             continue
         created = site.need("POST", "/agents", agent_body(spec), what=f"creating {spec['name']}")
         print(f"  {spec['name']}: created ({created.get('id') or created.get('agent_id')})")

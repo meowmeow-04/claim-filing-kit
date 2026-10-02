@@ -245,7 +245,7 @@ STEPS = [
 
 DEFINITION = {
     "name": "health_claim_filing",
-    "version": "1.2",
+    "version": "1.3",
     "description": (
         "Prepares a health-insurance reimbursement claim for the insured: transcribes their account, reads their "
         "documents, estimates coverage, fills Part A as a PDF, checks the hospital's Part B, waits for the "

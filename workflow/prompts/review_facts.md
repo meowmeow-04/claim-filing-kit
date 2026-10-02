@@ -6,6 +6,8 @@ Read
 - `task.context.transcribe.output.transcript` and `task.context.medical_records.output.documents`.
 
 Return the same fields as the incident assessment: `incident_summary`, `incident_date`, `cause`, `injury_or_illness`, `pre_existing_related`, `pre_existing_evidence` and `open_questions`.
+- `incident_date` is always YYYY-MM-DD, or "" when still unknown.
+- An answer that is more specific than the assessment replaces it: a "hand injury" the insured says was a fractured right wrist becomes "Fracture of the right wrist".
 - Change a field only where an answer settles it, and keep every other field as the assessment had it. An answer that gives the year completes `incident_date` together with the day and month the insured stated.
 - An answer cannot override the medical reports: if it contradicts them, keep the reports' version and say so in `open_questions`.
 - `open_questions` lists only what is still unsettled.
