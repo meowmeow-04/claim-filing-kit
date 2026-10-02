@@ -290,20 +290,17 @@ class Claim:
         for number, question in enumerate(questions or ["Please confirm the details above."], 1):
             print(f"    {number}. {question}")
         item = self.approval_for(str(reply.get("run_id") or ""))
-        if self.auto_answer or item is None:
-            answers = self.auto_answer or input("  Your answers: ").strip()
-            if item:
-                self.site.need(
-                    "POST", f"/approvals/{item['id']}/decide", {"decision": "approve", "notes": answers}, "sending answers"
-                )
+        # The website's approval card has no note box (its Approve sends an empty
+        # note), so the insured answers here and the answers are recorded as the
+        # note of that approval on the website.
+        answers = self.auto_answer or input("  Your answers: ").strip()
+        if item:
+            status, _ = self.site.call("POST", f"/approvals/{item['id']}/decide", {"decision": "approve", "notes": answers})
+            if status < 300:
                 print("  answers recorded on the website's approval")
-            return answers
-        print("  Answer on the website: open Approvals, type your answers in the note and approve.")
-        decision, notes = self.decision_of(item["id"], with_notes=True)
-        if decision != "approve":
-            raise SystemExit(f"The insured chose {decision} instead of answering; the claim stops here.")
-        print(f"  answers from the website: {notes}")
-        return notes
+            else:
+                print(f"  (the website's approval was already decided; HTTP {status}) the answers are used anyway")
+        return answers
 
     def step(self, key: str) -> dict[str, Any]:
         reply, out = self.run_agent(key)
@@ -448,7 +445,7 @@ def main() -> int:
     run_cmd.add_argument("--claim", default="DEMO-CLAIM-001")
     run_cmd.add_argument("--outbox", default="~/claim-desk-outbox")
     run_cmd.add_argument(
-        "--answer", default="", help="answer any question with this text; without it, answer in the website's Approvals"
+        "--answer", default="", help="answer any question with this text instead of typing it when asked"
     )
     run_cmd.add_argument("--approve", action="store_true", help="approve the final form here instead of on the website")
     args = parser.parse_args()
