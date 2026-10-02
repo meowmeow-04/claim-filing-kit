@@ -261,7 +261,17 @@ def answer(api: Api, run_id: str, notes: str, wait_seconds: int) -> int:
         "sending the answers",
     )
     print(f"Answers sent for run {run_id}; it continues with them")
-    return follow(api, run_id, wait_seconds)
+    # AgenticOrg resumes the run in the background, so the first reads can
+    # still show the step waiting: wait until it moves on, then follow.
+    step_id = str((item.get("context") or {}).get("step_id") or "")
+    deadline = time.monotonic() + wait_seconds
+    while step_id and time.monotonic() < deadline:
+        state = _need(*api.call("GET", f"/workflows/runs/{run_id}"), "reading the run")
+        waiting = {str(s.get("step_id")) for s in state.get("steps") or [] if s.get("status") == "waiting_hitl"}
+        if step_id not in waiting:
+            break
+        time.sleep(3)
+    return follow(api, run_id, max(1, int(deadline - time.monotonic())))
 
 
 def follow(api: Api, run_id: str, wait_seconds: int) -> int:

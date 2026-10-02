@@ -110,6 +110,7 @@ class _Server:
         self.polls = 0
         self.unsure = unsure  # the analyst pauses on ``incident`` with a question for the insured
         self.decision: dict | None = None
+        self.reads_after_decision = 0
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -132,6 +133,8 @@ class _Server:
                     return self._reply(200, {"items": [{"id": f"id-{n}", "name": n} for n in sorted(outer.existing)]})
                 if self.path.startswith("/api/v1/workflows/runs/") and outer.unsure:
                     if outer.decision is not None:
+                        outer.reads_after_decision += 1
+                    if outer.decision is not None and outer.reads_after_decision > 2:  # resumed in the background
                         steps = [
                             {"step_id": "incident", "status": "completed", "error_message": None},
                             {"step_id": "incident_review", "status": "completed", "error_message": None},
@@ -281,6 +284,8 @@ def test_answer_approves_the_runs_own_item_with_the_answers_and_follows_it(
     out = capsys.readouterr().out
     assert code == 0 and "Answers sent for run run-1" in out and "incident_review: completed" in out
     assert server.decision == {"decision": "approve", "notes": "It was in 2026."}
+    # the first reads after the decision still showed the step waiting; it was not reported as paused again
+    assert server.reads_after_decision > 2 and "asks the insured" not in out
     assert ("POST", "/api/v1/approvals/hitl-1/decide") in server.calls  # not the other run's item (hitl-0)
 
 
