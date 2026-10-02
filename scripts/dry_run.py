@@ -114,6 +114,23 @@ def scripted_replies(policy_active: bool) -> dict[str, dict[str, Any]]:
             "open_questions": [],
             "answered": [{"question": "Which year did the fall happen?", "answer": "2026"}],
         },
+        # Runs only when the insured answered a later step's questions (answers_gate).
+        "review_facts": {
+            "status": "completed",
+            "confidence": 0.93,
+            "incident_summary": (
+                "On 14 September 2026 the insured slipped on wet stairs at home and fell on her right hand. "
+                "She was admitted to Sample City Hospital, where a fracture of the right wrist was set under "
+                "anaesthesia and put in a cast. She was discharged the next day."
+            ),
+            "incident_date": "2026-09-14",
+            "cause": "injury",
+            "injury_or_illness": "Fracture of the right wrist",
+            "pre_existing_related": "no",
+            "pre_existing_evidence": [],
+            "open_questions": [],
+            "answered": [{"question": "Which year did the fall happen?", "answer": "2026", "asked_by": "eligibility"}],
+        },
         "check_eligibility": {
             "status": "completed",
             "confidence": 0.92,

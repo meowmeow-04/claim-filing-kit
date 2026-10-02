@@ -162,6 +162,30 @@ STEPS = [
     agent("coverage", "State 4: coverage summary", "summarise_coverage", "summarise_coverage", ["hospital_form"]),
     # State 5 - incident report
     agent("report", "State 5: incident report", "write_report", "write_report", ["coverage"]),
+    # State 5 - answers given after the incident was assessed. Eligibility,
+    # coverage or the report can pause with questions too; their answers do not
+    # re-run that step (the engine only runs forward), but this review brings
+    # the incident facts up to date before the form is filled, so a year given
+    # at eligibility reaches the form. fill_form follows the gate; the review
+    # runs first by definition order (tests/test_workflow.py).
+    {
+        "id": "answers_gate",
+        "name": "State 5: did the insured answer questions after the incident step?",
+        "type": "condition",
+        "condition": (
+            'eligibility.output.hitl_decision.notes != "" or coverage.output.hitl_decision.notes != "" '
+            'or report.output.hitl_decision.notes != ""'
+        ),
+        "true_path": "facts_review",
+        "depends_on": ["report"],
+    },
+    agent(
+        "facts_review",
+        "State 5: bring the incident facts up to date with the insured's answers",
+        "review_facts",
+        "review_facts",
+        ["answers_gate"],
+    ),
     # State 6 - fill the insured's form
     connector(
         "fill_form",
@@ -174,9 +198,10 @@ STEPS = [
             "transcript": "$transcribe",
             "incident": "$incident",
             "incident_review": "$incident_review",
+            "facts_review": "$facts_review",
             "coverage": "$coverage",
         },
-        ["report"],
+        ["answers_gate"],
     ),
     {
         "id": "hospital_gate",
@@ -202,7 +227,8 @@ STEPS = [
         "title": "Check and approve the claim form before it is packaged",
         "type": "human_in_loop",
         "assignee_role": "admin",
-        "decision_options": ["approve", "reject"],
+        # AgenticOrg's own shape; a plain list made a reject crash with a 500.
+        "decision_options": {"options": ["approve", "reject"]},
         "timeout_hours": 48,
         "depends_on": ["hospital_gate"],
     },
@@ -219,7 +245,7 @@ STEPS = [
 
 DEFINITION = {
     "name": "health_claim_filing",
-    "version": "1.1",
+    "version": "1.2",
     "description": (
         "Prepares a health-insurance reimbursement claim for the insured: transcribes their account, reads their "
         "documents, estimates coverage, fills Part A as a PDF, checks the hospital's Part B, waits for the "

@@ -52,15 +52,16 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _incident_result(incident: Any, incident_review: Any) -> dict[str, Any]:
-    """The incident assessment to use: the review made with the insured's answers when it ran, else the first one.
+def _incident_result(incident: Any, *reviews: Any) -> dict[str, Any]:
+    """The incident assessment to use: the latest review made with the insured's answers, else the first one.
 
-    A review step that was skipped, or a placeholder the run did not fill,
-    carries no assessment, so the first one stands.
+    ``reviews`` come newest first. A review step that was skipped, or a
+    placeholder the run did not fill, carries no assessment and is passed over.
     """
-    review = _payload(incident_review)
-    if review.get("incident_summary") or review.get("incident_date"):
-        return review
+    for review in reviews:
+        found = _payload(review)
+        if found.get("incident_summary") or found.get("incident_date"):
+            return found
     return _payload(incident)
 
 
@@ -332,15 +333,16 @@ class ClaimDeskConnector(BaseConnector):
         incident: Any = None,
         coverage: Any = None,
         incident_review: Any = None,
+        facts_review: Any = None,
     ) -> dict[str, Any]:
         """Fill a claim form as a PDF and save it to the outbox. Nothing is sent.
 
         form=part_a (default): the insured's form. Identity, policy and bank
         fields come from the vault; hospital and bill fields from the
         hospital's form; the incident description and the amounts claimed from
-        the transcript, incident and coverage results passed in (the incident
-        review, made with the insured's answers, replaces the incident result
-        when there is one). The signature
+        the transcript, incident and coverage results passed in (the latest
+        review made with the insured's answers, facts_review then
+        incident_review, replaces the incident result). The signature
         is always left blank for the insured.
         form=part_b_request: the hospital's form with only the patient section
         filled, to hand to the hospital.
@@ -371,7 +373,7 @@ class ClaimDeskConnector(BaseConnector):
             raise ValueError("form must be part_a or part_b_request")
 
         said = _payload(transcript)
-        incident_out = _incident_result(incident, incident_review)
+        incident_out = _incident_result(incident, facts_review, incident_review)
         coverage_out = _payload(coverage)
         bank = profile.get("bank") if isinstance(profile.get("bank"), dict) else {}
 

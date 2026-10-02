@@ -68,6 +68,8 @@ def test_the_analyst_has_no_tools_and_the_package_step_follows_the_approval() ->
     assert by_id["package"]["depends_on"] == ["approval"]
     assert by_id["package"]["params"]["approval"] == "$approval"
     assert by_id["approval"]["type"] == "human_in_loop"
+    # AgenticOrg's shape: a plain list made a reject crash in its feedback capture
+    assert by_id["approval"]["decision_options"] == {"options": ["approve", "reject"]}
 
 
 # ----------------------------------------------------------------------- runs
@@ -79,7 +81,8 @@ async def test_complete_claim_runs_all_eight_states(tmp_path: Path) -> None:
     result = statuses(outcome)
     assert result.pop("stop_not_eligible") == "skipped" and result.pop("hospital_form_needed") == "skipped"
     assert result.pop("incident_review") == "skipped"  # the analyst was sure: nothing to ask the insured
-    assert set(result.values()) == {"completed"} and len(result) == len(STEP_IDS) - 3
+    assert result.pop("facts_review") == "skipped"
+    assert set(result.values()) == {"completed"} and len(result) == len(STEP_IDS) - 4
 
     assert output(outcome, "transcribe")["transcript"].startswith("On the fourteenth")
     assert output(outcome, "checks")["policy_status"] == "active"
@@ -187,11 +190,21 @@ def test_the_review_hangs_off_a_gate_and_runs_before_the_policy_step() -> None:
     assert by_id["incident_review"]["depends_on"] == ["clarify_gate"]
     # later steps follow the gate, not the review, so a skipped review cannot skip them
     assert by_id["policy"]["depends_on"] == ["clarify_gate"]
-    assert all("incident_review" not in step.get("depends_on", []) for step in DEFINITION["steps"])
+    assert all(
+        review not in step.get("depends_on", [])
+        for step in DEFINITION["steps"]
+        for review in ("incident_review", "facts_review")
+    )
     for step_id in ("checks", "fill_form"):
         assert by_id[step_id]["params"]["incident_review"] == "$incident_review"
     order = WorkflowEngine._topological_sort(DEFINITION["steps"])
     assert order.index("incident_review") < order.index("policy")
+    answers = by_id["answers_gate"]
+    assert answers["depends_on"] == ["report"] and answers["true_path"] == "facts_review"
+    assert all(f"{s}.output.hitl_decision.notes" in answers["condition"] for s in ("eligibility", "coverage", "report"))
+    assert by_id["fill_form"]["depends_on"] == ["answers_gate"]
+    assert by_id["fill_form"]["params"]["facts_review"] == "$facts_review"
+    assert order.index("facts_review") < order.index("fill_form")
 
 
 async def test_an_unsure_analyst_asks_and_the_answer_corrects_the_claim(tmp_path: Path) -> None:
@@ -231,6 +244,36 @@ async def test_approving_without_answers_keeps_the_first_assessment(tmp_path: Pa
     assert result["policy"] == "completed" and result["checks"] == "completed"
     assert output(outcome, "checks")["date_source"] != "incident_result"  # no date to use: the first one had none
     assert outcome["calls"] == 4
+
+
+NO_YEAR = {**dry_run.scripted_replies(True)["assess_incident"], "incident_date": ""}
+UNSURE_ELIGIBILITY = {
+    "status": "completed",
+    "confidence": 0.6,
+    "decision": "needs_review",
+    "open_questions": ["Which year did the fall on 14th September happen?"],
+}
+
+
+async def test_an_answer_given_at_eligibility_reaches_the_claim_form(tmp_path: Path) -> None:
+    # Replays the live run of 2026-10-03: the incident step was sure but had no
+    # year, eligibility asked for it, and the form's date of event stayed blank.
+    outcome = await dry_run.run(
+        "DEMO-MEMBER-001",
+        "DEMO-CLAIM-001",
+        outbox=tmp_path,
+        replies={"assess_incident": NO_YEAR, "check_eligibility": UNSURE_ELIGIBILITY},
+        answers="2026, and it was wet stairs",
+        real_confidence_floor=True,
+    )
+    result = statuses(outcome)
+    assert outcome["status"] == "completed"
+    assert result["incident_review"] == "skipped" and result["facts_review"] == "completed"
+    assert output(outcome, "eligibility")["hitl_decision"]["notes"] == "2026, and it was wet stairs"
+    form = read_fields(Path(output(outcome, "fill_form")["pdf_path"]).read_bytes())
+    assert form["date_of_event"] == "2026-09-14"
+    assert "date_of_event" not in output(outcome, "fill_form")["blank_fields"]
+    assert outcome["calls"] == 5  # incident, eligibility, coverage, report, facts review
 
 
 STATEMENT = "On the fourteenth of September I slipped on the wet stairs at home and broke my right wrist."
