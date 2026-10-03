@@ -293,7 +293,12 @@ class Claim:
         # The website's approval card has no note box (its Approve sends an empty
         # note), so the insured answers here and the answers are recorded as the
         # note of that approval on the website.
-        answers = self.auto_answer or input("  Your answers: ").strip()
+        try:
+            answers = self.auto_answer or input("  Your answers: ").strip()
+        except EOFError:
+            raise SystemExit(
+                "  No terminal to answer in. Run again with --answer \"...\" (the approval stays pending on the website)."
+            ) from None
         if item:
             status, _ = self.site.call("POST", f"/approvals/{item['id']}/decide", {"decision": "approve", "notes": answers})
             if status < 300:
