@@ -362,7 +362,10 @@ async def run(args: argparse.Namespace) -> int:
     missing = [s["name"] for s in AGENTS if s["key"] not in agents]
     if missing:
         raise SystemExit(f"Run setup first; missing on the website: {', '.join(missing)}")
-    desk = ClaimDeskConnector({"claim_desk_outbox_dir": str(Path(args.outbox).expanduser())})
+    config = {"claim_desk_outbox_dir": str(Path(args.outbox).expanduser())}
+    if args.vault:
+        config["claim_desk_vault_dir"] = str(Path(args.vault).expanduser())
+    desk = ClaimDeskConnector(config)
     claim = Claim(site, agents, args.answer, args.approve)
     member, ref = args.member, args.claim
 
@@ -449,6 +452,7 @@ def main() -> int:
     run_cmd.add_argument("--member", default="DEMO-MEMBER-001")
     run_cmd.add_argument("--claim", default="DEMO-CLAIM-001")
     run_cmd.add_argument("--outbox", default="~/claim-desk-outbox")
+    run_cmd.add_argument("--vault", default="", help="the document vault; default: the bundled demo vault")
     run_cmd.add_argument(
         "--answer", default="", help="answer any question with this text instead of typing it when asked"
     )
