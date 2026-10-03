@@ -28,6 +28,7 @@ import http.cookiejar
 import json
 import os
 import ssl
+import subprocess
 import sys
 import time
 import urllib.error
@@ -429,7 +430,54 @@ async def run(args: argparse.Namespace) -> int:
     return 0
 
 
+def record_statement(sessions_dir_arg: str) -> str:
+    """Open the live capture page, wait for Stop and save, and return the new statement's text.
+
+    The capture server saves a session in one step (a temporary file renamed into
+    place), so a new vs_*.json in the sessions folder is a finished statement.
+    """
+    from agenticorg_gnani.sessions import load_session, sessions_dir
+
+    if not os.environ.get("GNANI_API_KEY", "").strip():
+        raise SystemExit("Set GNANI_API_KEY to record a statement.")
+    folder = sessions_dir(sessions_dir_arg or os.environ.get("GNANI_SESSIONS_DIR"))
+    folder.mkdir(parents=True, exist_ok=True)
+    seen = {p.name for p in folder.glob("vs_*.json")}
+    server = subprocess.Popen(  # noqa: S603 - our own module, fixed arguments
+        [sys.executable, "-m", "agenticorg_gnani.voice_server", "--sessions-dir", str(folder)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    print("Recording: the capture page opens in your browser (http://localhost:8765).")
+    print("  Choose the language, press Start recording, speak, then press Stop and save.")
+    try:
+        while True:
+            if server.poll() is not None:
+                problem = (server.stderr.read() if server.stderr else "").strip().splitlines()[-1:]
+                raise SystemExit(f"The capture page stopped: {problem[0] if problem else 'see the terminal'}")
+            for path in sorted(folder.glob("vs_*.json"), key=lambda p: p.stat().st_mtime):
+                if path.name in seen:
+                    continue
+                seen.add(path.name)
+                session = load_session(folder, path.stem)
+                text = str(session.get("transcript") or "").strip()
+                if text:
+                    print(f"  saved as {path.stem}")
+                    return text
+                print("  that recording has no words in it; record again and press Stop and save.")
+            time.sleep(1)
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            server.kill()
+
+
 def _statement(args: argparse.Namespace) -> str:
+    if args.record:
+        return record_statement(args.sessions_dir)
     if args.voice_session:
         from agenticorg_gnani.sessions import load_session, sessions_dir
 
@@ -437,7 +485,7 @@ def _statement(args: argparse.Namespace) -> str:
         return str(session.get("transcript") or "").strip()
     if args.statement:
         return args.statement.strip()
-    raise SystemExit("Give --voice-session vs_... or --statement '...'")
+    raise SystemExit("Give --record, --voice-session vs_... or --statement '...'")
 
 
 def main() -> int:
@@ -446,6 +494,7 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("setup", help="create the claim desk agents on the website")
     run_cmd = commands.add_parser("run", help="run a claim through the website's agents")
+    run_cmd.add_argument("--record", action="store_true", help="record the statement now on the live capture page")
     run_cmd.add_argument("--voice-session", help="a statement captured live, like vs_0123456789abcdef")
     run_cmd.add_argument("--sessions-dir", default="")
     run_cmd.add_argument("--statement", help="the statement as text, instead of a voice session")
