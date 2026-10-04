@@ -197,8 +197,10 @@ def system_prompt(spec: dict[str, Any]) -> str:
     return f"{first}\n\n{READING}\n\nRules\n{rules.strip()}\n\n{specific}"
 
 
-def agent_body(spec: dict[str, Any]) -> dict[str, Any]:
+def agent_body(spec: dict[str, Any], model: str = "") -> dict[str, Any]:
+    llm = {"llm": {"model": model, "fallback_model": model}} if model else {}  # no fallback to another provider
     return {
+        **llm,
         "name": spec["name"],
         "agent_type": f"claim_desk_{spec['key']}",
         "domain": DOMAIN,
@@ -215,21 +217,36 @@ def find_agents(site: Site) -> dict[str, dict[str, Any]]:
     return {spec["key"]: by_name[spec["name"]] for spec in AGENTS if spec["name"] in by_name}
 
 
-def setup(site: Site) -> int:
+def setup(site: Site, model: str = "") -> int:
+    """Create the agents, or update their instructions. With ``model``, agents on another model are replaced.
+
+    On the hackathon site a change to an agent's model, floor or HITL rule becomes
+    a change request for an admin, so an agent on the wrong model is retired
+    (renamed and paused; agents cannot be deleted there) and created again.
+    """
     existing = find_agents(site)
+    stamp = time.strftime("%Y-%m-%d %H:%M")
     for spec in AGENTS:
         if spec["key"] in existing:
             agent_id = existing[spec["key"]]["id"]
             stored = site.need("GET", f"/agents/{agent_id}", what=f"reading {spec['name']}")
-            wanted = system_prompt(spec)
-            if (stored.get("system_prompt_text") or stored.get("system_prompt") or "").strip() == wanted.strip():
-                print(f"  {spec['name']}: up to date ({agent_id})")
+            if model and (stored.get("llm_model") or "") != model:
+                retired = f"{spec['name']} (retired {stamp})"
+                site.need("PATCH", f"/agents/{agent_id}", {"name": retired, "employee_name": retired}, what="retiring")
+                site.need("POST", f"/agents/{agent_id}/pause", {}, what="pausing the retired agent")
+                print(f"  {spec['name']}: retired the agent on {stored.get('llm_model') or 'the default model'}")
             else:
-                site.need("PATCH", f"/agents/{agent_id}", {"system_prompt_text": wanted}, what=f"updating {spec['name']}")
-                print(f"  {spec['name']}: instructions updated ({agent_id})")
-            continue
-        created = site.need("POST", "/agents", agent_body(spec), what=f"creating {spec['name']}")
-        print(f"  {spec['name']}: created ({created.get('id') or created.get('agent_id')})")
+                wanted = system_prompt(spec)
+                if (stored.get("system_prompt_text") or stored.get("system_prompt") or "").strip() == wanted.strip():
+                    print(f"  {spec['name']}: up to date ({agent_id})")
+                else:
+                    site.need(
+                        "PATCH", f"/agents/{agent_id}", {"system_prompt_text": wanted}, what=f"updating {spec['name']}"
+                    )
+                    print(f"  {spec['name']}: instructions updated ({agent_id})")
+                continue
+        created = site.need("POST", "/agents", agent_body(spec, model), what=f"creating {spec['name']}")
+        print(f"  {spec['name']}: created on {model or 'the default model'} ({created.get('id') or created.get('agent_id')})")
     return 0
 
 
@@ -668,7 +685,8 @@ def main() -> int:
     sys.stdout.reconfigure(line_buffering=True)  # each line shows as it happens, in a terminal or a log
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("setup", help="create the claim desk agents on the website")
+    setup_cmd = commands.add_parser("setup", help="create the claim desk agents on the website")
+    setup_cmd.add_argument("--model", default="", help="put the agents on this model (replaces agents on another one)")
     run_cmd = commands.add_parser("run", help="run a claim through the website's agents")
     run_cmd.add_argument("--record", action="store_true", help="record the statement now on the live capture page")
     run_cmd.add_argument("--voice-session", help="a statement captured live, like vs_0123456789abcdef")
@@ -684,7 +702,7 @@ def main() -> int:
     run_cmd.add_argument("--approve", action="store_true", help="approve the final form here instead of on the website")
     args = parser.parse_args()
     if args.command == "setup":
-        return setup(site_from_env())
+        return setup(site_from_env(), args.model)
     return asyncio.run(run(args))
 
 
