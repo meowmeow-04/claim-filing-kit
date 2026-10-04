@@ -27,6 +27,7 @@ import asyncio
 import http.cookiejar
 import json
 import os
+import re
 import ssl
 import subprocess
 import sys
@@ -73,10 +74,11 @@ APPROVAL_PROMPT = (
     "The claim form has been filled. Your only job is to hand it to the insured for approval: you never approve "
     "anything yourself.\n"
     "Reply with one JSON object and nothing else: "
-    '{"status": "completed", "confidence": 0.5, "summary": "<two sentences on what will be filed: the incident, '
-    'the amount claimed and the form path from task.context.fill_form.output.pdf_path>", '
+    '{"status": "completed", "confidence": 0.5, "summary": "<two sentences on what will be filed: the incident '
+    'and the amount claimed>", '
     '"open_questions": ["Do you approve this claim form for filing?"]}. '
-    "Always use confidence 0.5, so the run pauses for the insured's decision."
+    "Always use confidence 0.5, so the run pauses for the insured's decision. "
+    "Never mention file names, folders or where the form is stored."
 )
 
 
@@ -228,12 +230,39 @@ def recall(statement: str) -> list[str]:
 
 def remember(claim_ref: str, results: dict[str, Any]) -> None:
     keep = {k: results[k] for k in ("incident", "eligibility", "coverage") if k in results}
-    content = f"Claim {claim_ref}, as prepared by the claim desk:\n{json.dumps(keep, default=str)[:15000]}"
+    content = f"Claim {claim_ref}, as prepared by the claim desk:\n{json.dumps(without_local_paths(keep), default=str)[:15000]}"
     if _memory("/v3/documents", {"content": content, "containerTag": MEMORY_TAG}) is not None:
         print("  memory: this claim's outcome was added")
 
 
 # ------------------------------------------------------------------------ run
+
+
+def without_local_paths(value: Any) -> Any:
+    """``value`` as it may go to the website: any text that names a file on this machine is replaced.
+
+    The claim form and the package are written on this machine; their paths
+    (which also name the user's home folder) must not appear in agent runs or
+    approvals on the hosted site.
+    """
+    if isinstance(value, dict):
+        return {k: without_local_paths(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [without_local_paths(v) for v in value]
+    if isinstance(value, str):
+        value = value.replace(str(Path.home()), "/~")
+        return _LOCAL_PATH.sub("(kept on the insured's computer)", value)
+    return value
+
+
+# An absolute path with at least two parts, not part of a URL ("https://...")
+# or a fraction ("1/2"): "/Users/name/claim-desk-outbox/x.pdf", "/tmp/x/y.pdf".
+_LOCAL_PATH = re.compile(r"(?<![\w:/.])/(?:[\w.~@+-]+/)+[\w.~@+-]+")
+
+
+def shown(path: Any) -> str:
+    """A path as printed in the terminal: the home folder (which names the user) as ~."""
+    return str(path or "").replace(str(Path.home()), "~")
 
 
 def _output(reply: dict[str, Any]) -> dict[str, Any]:
@@ -268,7 +297,7 @@ class Claim:
         body = {
             "action": spec["action"],
             "inputs": {"instruction": f"Do the '{spec['action']}' job described in your instructions."},
-            "context": self.context,
+            "context": without_local_paths(self.context),
         }
         print(f"{spec['name']} ...", flush=True)
         reply = self.site.need("POST", f"/agents/{agent_id}/run", body, what=f"running {spec['name']}")
@@ -410,10 +439,10 @@ async def run(args: argparse.Namespace) -> int:
         member, ref, form="part_a", transcript={"transcript": statement}, incident=incident, coverage=coverage
     )
     claim.context["fill_form"] = {"output": form, "status": "completed"}
-    print(f"State 6: claim form {form.get('status')}: {form.get('pdf_path')} (blank: {form.get('blank_fields') or 'none'})")
+    print(f"State 6: claim form {form.get('status')}: {shown(form.get('pdf_path'))} (blank: {form.get('blank_fields') or 'none'})")
     if checks.get("hospital_form") != "received":
         request = await desk.prepare_draft(member, ref, form="part_b_request")
-        print(f"Stopped: Part B prepared for the hospital to complete: {request.get('pdf_path')}")
+        print(f"Stopped: Part B prepared for the hospital to complete: {shown(request.get('pdf_path'))}")
         return 0
 
     print("State 7: the insured approves the form")
@@ -423,7 +452,7 @@ async def run(args: argparse.Namespace) -> int:
         print("Not approved: nothing was packaged.")
         return 0
     package = await desk.build_filing_payload(member, ref, approval={"decision": "approve"})
-    print(f"State 8: {package.get('status')}: {package.get('package_dir')} (receipt {package.get('submission', {}).get('confirmation_id')}, simulated)")
+    print(f"State 8: {package.get('status')}: {shown(package.get('package_dir'))} (receipt {package.get('submission', {}).get('confirmation_id')}, simulated)")
     for warning in package.get("warnings") or []:
         print(f"  note: {warning}")
     remember(ref, {"incident": incident, "eligibility": eligibility, "coverage": coverage})
@@ -462,10 +491,22 @@ def record_statement(sessions_dir_arg: str) -> str:
                 seen.add(path.name)
                 session = load_session(folder, path.stem)
                 text = str(session.get("transcript") or "").strip()
-                if text:
-                    print(f"  saved as {path.stem}")
-                    return text
-                print("  that recording has no words in it; record again and press Stop and save.")
+                if not text:
+                    print("  that recording has no words in it; record again and press Stop and save.")
+                    continue
+                if session.get("complete") is False:
+                    why = "; ".join(str(p) for p in session.get("problems") or []) or "it ended early"
+                    print(f"  The recording was cut short ({why}). What was captured:")
+                    print(f"    {text}")
+                    try:
+                        choice = input("  Record again (r) or use this (u)? [r] ").strip().lower()
+                    except EOFError:
+                        choice = "r"
+                    if choice != "u":
+                        print("  Record again on the capture page, then press Stop and save.")
+                        continue
+                print(f"  saved as {path.stem}")
+                return text
             time.sleep(1)
     finally:
         server.terminate()
