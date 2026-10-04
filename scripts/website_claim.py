@@ -67,17 +67,30 @@ AGENTS = [
     {"key": "coverage", "name": "Claim Desk: Coverage", "action": "summarise_coverage", "prompt": "summarise_coverage"},
     {"key": "report", "name": "Claim Desk: Incident Report", "action": "write_report", "prompt": "write_report"},
     {"key": "facts_review", "name": "Claim Desk: Facts Review", "action": "review_facts", "prompt": "review_facts"},
-    {"key": "approval", "name": "Claim Desk: Final Approval", "action": "request_approval", "prompt": None},
+    # Pauses on every run for the insured: its floor is 1.0 and its confidence,
+    # its own assessment, stops at 0.95 (only the insured can confirm an unsigned
+    # form). The hackathon site does not apply hitl_condition rules on agent runs,
+    # and a floor or rule changed after creation waits for an admin's approval,
+    # so the floor is set when the agent is created.
+    {
+        "key": "approval",
+        "name": "Claim Desk: Final Approval",
+        "action": "request_approval",
+        "prompt": None,
+        "confidence_floor": 1.0,
+    },
 ]
 APPROVAL_PROMPT = (
     "You are the last step of a workflow that prepares a health-insurance claim for the insured person. "
-    "The claim form has been filled. Your only job is to hand it to the insured for approval: you never approve "
-    "anything yourself.\n"
+    "The claim form has been filled. Your job is to summarise it for the insured, who decides whether it is filed: "
+    "you never approve anything yourself.\n"
+    "Read the incident (task.context.incident_review.output or task.context.incident.output), the eligibility "
+    "result (task.context.eligibility.output) and the coverage summary (task.context.coverage.output).\n"
     "Reply with one JSON object and nothing else: "
-    '{"status": "completed", "confidence": 0.5, "summary": "<two sentences on what will be filed: the incident '
-    'and the amount claimed>", '
+    '{"status": "completed", "confidence": <0 to 0.95: how fully those results support your summary; never above '
+    '0.95, because only the insured can confirm an unsigned claim form>, '
+    '"summary": "<two sentences: the incident and its date, and the amount claimed and not claimed>", '
     '"open_questions": ["Do you approve this claim form for filing?"]}. '
-    "Always use confidence 0.5, so the run pauses for the insured's decision. "
     "Never mention file names, folders or where the form is stored."
 )
 
@@ -171,7 +184,7 @@ def agent_body(spec: dict[str, Any]) -> dict[str, Any]:
         "domain": DOMAIN,
         "system_prompt_text": system_prompt(spec),
         "authorized_tools": [],  # the analysts reason over what they are given; they call nothing
-        "confidence_floor": 0.88,
+        "confidence_floor": spec.get("confidence_floor", 0.88),
         "initial_status": "shadow",
     }
 
