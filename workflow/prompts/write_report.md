@@ -8,3 +8,4 @@ Return these fields
 - `open_questions`: every open question from the earlier steps, without duplicates.
 
 Report only what the earlier steps found. Add nothing new.
+Your `confidence` is how faithfully the report reflects the earlier steps' results. When they agree with each other and nothing is open, that is high; an open question from an earlier step lowers it only if the report depends on the answer.

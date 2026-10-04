@@ -329,15 +329,22 @@ class Claim:
         """The agent paused: ask the insured its questions and close its approval item with the answers."""
         questions = [str(q) for q in out.get("open_questions") or [] if str(q).strip()]
         print(f"  paused: {reply.get('hitl_trigger') or 'the analyst is unsure'}")
-        print("  The analyst asks the insured:")
-        for number, question in enumerate(questions or ["Please confirm the details above."], 1):
-            print(f"    {number}. {question}")
+        if questions:
+            print("  The analyst asks the insured:")
+            for number, question in enumerate(questions, 1):
+                print(f"    {number}. {question}")
+        else:
+            summary = out.get("summary_for_approver") or out.get("summary") or out.get("incident_summary") or out.get("report")
+            print("  The analyst is unsure but asked nothing specific. What it found:")
+            for line in str(summary or "(no summary)").splitlines()[:8]:
+                print(f"    {line}")
+            print("  Press Enter to accept it, or type a correction.")
         item = self.approval_for(str(reply.get("run_id") or ""))
         # The website's approval card has no note box (its Approve sends an empty
         # note), so the insured answers here and the answers are recorded as the
         # note of that approval on the website.
         try:
-            answers = self.auto_answer or input("  Your answers: ").strip()
+            answers = self.auto_answer or input("  Your answers: ").strip() or "Accepted as it is."
         except EOFError:
             raise SystemExit(
                 "  No terminal to answer in. Run again with --answer \"...\" (the approval stays pending on the website)."
