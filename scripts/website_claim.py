@@ -333,8 +333,22 @@ class Claim:
             "context": without_local_paths(self.context),
         }
         print(f"{spec['name']} ...", flush=True)
-        reply = self.site.need("POST", f"/agents/{agent_id}/run", body, what=f"running {spec['name']}")
-        return reply, _output(reply)
+        waits = (10, 20)  # the site's model is rate-limited and shared by every team; a short pause clears it
+        for attempt in range(len(waits) + 1):
+            reply = self.site.need("POST", f"/agents/{agent_id}/run", body, what=f"running {spec['name']}")
+            out = _output(reply)
+            if reply.get("hitl_trigger") or out.get("status") or out.get("confidence") is not None:
+                return reply, out
+            # An empty answer is never read as a decision ("not covered", "no stay"): retry, then stop.
+            detail = reply.get("error") or reply.get("status") or "no detail"
+            if attempt < len(waits):
+                print(f"  (the website returned no answer: {detail}; trying again in {waits[attempt]} s)")
+                time.sleep(waits[attempt])
+                self.before = {i["id"] for i in self.pending_for(agent_id)}
+        raise SystemExit(
+            f"{spec['name']} returned no answer {len(waits) + 1} times ({detail}). "
+            "The claim stops here without preparing anything; run it again in a minute."
+        )
 
     def approval_for(self, _run_id: str = "") -> dict[str, Any] | None:
         """The pending approval the last agent run created, if it paused."""
