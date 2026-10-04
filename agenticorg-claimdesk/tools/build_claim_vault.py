@@ -10,8 +10,9 @@ documents. The bundled demo, and the tests that use it, are left as they are.
     pip install reportlab pypdf          # used here only, not by the connector
     python tools/build_claim_vault.py ~/claim-desk-vault
 
-Then point the claim desk at it (claim_desk_vault_dir, or website_claim.py
---vault) and run the claim with --claim DEMO-CLAIM-005. Everything written is
+It keeps one hospital stay per incident (the bundled vault's two test
+variants of the wrist-fracture stay are left out). Point the claim desk at
+it (claim_desk_vault_dir, or website_claim.py --vault). Everything written is
 synthetic. Every page says so.
 """
 
@@ -102,6 +103,11 @@ def main() -> None:
     if target.exists():
         raise SystemExit(f"{target} exists; choose a new folder or remove it first")
     shutil.copytree(demo.DEMO / "vault", target)
+    # The bundled vault holds three variants of one wrist-fracture stay for the
+    # tests (complete, no Part B, scanned bill). A demo vault keeps one stay per
+    # incident, so a claim can be matched to its stay from the statement alone.
+    for duplicate in ("DEMO-CLAIM-002", "DEMO-CLAIM-004"):
+        shutil.rmtree(target / "members" / MEMBER_ID / "claims" / duplicate)
 
     data = demo.MEMBERS[MEMBER_ID]
     folder = target / "members" / MEMBER_ID / "claims" / CLAIM_REF
