@@ -437,7 +437,13 @@ async def run(args: argparse.Namespace) -> int:
     print(f"State 3: policy {checks['policy_status']} on {checks['checked_for_date']} ({checks['date_source']})")
     eligibility = claim.step("eligibility")
     if checks["policy_status"] != "active" or eligibility.get("decision") not in ("covered", "needs_review"):
-        print("Stopped: the policy is not in force or the incident is not covered; no claim prepared.")
+        if checks["policy_status"] != "active":
+            print(f"Stopped: the policy was not in force on {checks['checked_for_date']} "
+                  f"(policy period {checks.get('policy_period')}); no claim prepared.")
+        else:
+            reasons = eligibility.get("reasons") or eligibility.get("open_questions") or []
+            why = f": {reasons[0]}" if reasons else ""
+            print(f"Stopped: the analyst found the incident not covered{why}; no claim prepared.")
         remember(ref, {"incident": incident, "eligibility": eligibility})
         return 0
 
