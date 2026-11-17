@@ -1,9 +1,10 @@
 .venv/
-.ruff_cache/
+demo-output/
 __pycache__/
 *.pyc
-*.egg-info/
-build/
-demo-output/
 .env
+*.egg-info/
+.ruff_cache/
+build/
 .env.*
+.DS_Store
